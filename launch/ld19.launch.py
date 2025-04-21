@@ -19,6 +19,8 @@ Parameter Description:
       {'angle_crop_min': 135.0}
       {'angle_crop_max': 225.0}
       which is [135.0, 225.0], angle unit is degress.
+- Publish frequency:
+  1. Set publish frequency, example: {'publish_frequency': 10}
 '''
 
 def generate_launch_description():
@@ -37,7 +39,8 @@ def generate_launch_description():
         {'laser_scan_dir': True},
         {'enable_angle_crop_func': False},
         {'angle_crop_min': 135.0},
-        {'angle_crop_max': 225.0}
+        {'angle_crop_max': 225.0},
+        {'publish_frequency': 10}
       ]
   )
 

@@ -41,6 +41,7 @@ int main(int argc, char **argv) {
   setting.enable_angle_crop_func = false;
   setting.angle_crop_min = 0.0;
   setting.angle_crop_max = 0.0;
+  setting.publish_frequency = 10;
   
   // declare ros2 param
   node->declare_parameter<std::string>("product_name", product_name);
@@ -52,6 +53,7 @@ int main(int argc, char **argv) {
   node->declare_parameter<bool>("enable_angle_crop_func", setting.enable_angle_crop_func);
   node->declare_parameter<double>("angle_crop_min", setting.angle_crop_min);
   node->declare_parameter<double>("angle_crop_max", setting.angle_crop_max);
+  node->declare_parameter<int>("publish_frequency", setting.publish_frequency);
 
   // get ros2 param
   node->get_parameter("product_name", product_name);
@@ -63,6 +65,7 @@ int main(int argc, char **argv) {
   node->get_parameter("enable_angle_crop_func", setting.enable_angle_crop_func);
   node->get_parameter("angle_crop_min", setting.angle_crop_min);
   node->get_parameter("angle_crop_max", setting.angle_crop_max);
+  node->get_parameter("publish_frequency", setting.publish_frequency);
 
   ldlidar::LDLidarDriver* ldlidarnode = new ldlidar::LDLidarDriver();
 
@@ -76,6 +79,7 @@ int main(int argc, char **argv) {
   RCLCPP_INFO(node->get_logger(), "<enable_angle_crop_func>: %s", (setting.enable_angle_crop_func?"true":"false"));
   RCLCPP_INFO(node->get_logger(), "<angle_crop_min>: %f", setting.angle_crop_min);
   RCLCPP_INFO(node->get_logger(), "<angle_crop_max>: %f", setting.angle_crop_max);
+  RCLCPP_INFO(node->get_logger(), "<publish_frequency>: %d", setting.publish_frequency);
 
   if (product_name == "LDLiDAR_LD06") {
     type_name = ldlidar::LDType::LD_06;
@@ -110,7 +114,7 @@ int main(int argc, char **argv) {
   rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr publisher = 
       node->create_publisher<sensor_msgs::msg::LaserScan>(topic_name, 10);
   
-  rclcpp::WallRate r(10); //10hz
+  rclcpp::WallRate r(setting.publish_frequency);
 
   ldlidar::Points2D laser_scan_points;
   double lidar_scan_freq;
@@ -165,9 +169,11 @@ void  ToLaserscanMessagePublish(ldlidar::Points2D& src,  double lidar_spin_freq,
   angle_max = (2 * M_PI);
   range_min = 0.02;
   range_max = 25;
-  int beam_size = static_cast<int>(src.size());
-  angle_increment = (angle_max - angle_min) / (float)(beam_size -1);
-  // Calculate the number of scanning points
+
+  // Use a fixed beam size (LD06 typically has 507)
+  constexpr int EXPECTED_BEAMS = 507;
+  angle_increment = (angle_max - angle_min) / (float)(EXPECTED_BEAMS - 1);
+
   if (lidar_spin_freq > 0) {
     sensor_msgs::msg::LaserScan output;
     output.header.stamp = start_scan_time;
@@ -177,15 +183,20 @@ void  ToLaserscanMessagePublish(ldlidar::Points2D& src,  double lidar_spin_freq,
     output.range_min = range_min;
     output.range_max = range_max;
     output.angle_increment = angle_increment;
-    if (beam_size <= 1) {
+
+    if (EXPECTED_BEAMS <= 1) {
       output.time_increment = 0;
-    } else {
-      output.time_increment = static_cast<float>(scan_time / (double)(beam_size - 1));
     }
+    else {
+      output.time_increment = static_cast<float>(scan_time / (double)(EXPECTED_BEAMS - 1));
+    }
+
     output.scan_time = scan_time;
+
     // First fill all the data with Nan
-    output.ranges.assign(beam_size, std::numeric_limits<float>::quiet_NaN());
-    output.intensities.assign(beam_size, std::numeric_limits<float>::quiet_NaN());
+    output.ranges.assign(EXPECTED_BEAMS, std::numeric_limits<float>::quiet_NaN());
+    output.intensities.assign(EXPECTED_BEAMS, std::numeric_limits<float>::quiet_NaN());
+
     for (auto point : src) {
       float range = point.distance / 1000.f;  // distance unit transform to meters
       float intensity = point.intensity;      // laser receive intensity 
@@ -203,16 +214,11 @@ void  ToLaserscanMessagePublish(ldlidar::Points2D& src,  double lidar_spin_freq,
         }
       }
 
-      float angle = ANGLE_TO_RADIAN(dir_angle); // Lidar angle unit form degree transform to radian
+      float angle = ANGLE_TO_RADIAN(dir_angle); // Lidar angle unit from degree transform to radian
       int index = static_cast<int>(ceil((angle - angle_min) / angle_increment));
-      if (index < beam_size) {
-        if (index < 0) {
-          RCLCPP_ERROR(node->get_logger(), "error index: %d, beam_size: %d, angle: %f, output.angle_min: %f, output.angle_increment: %f", 
-            index, beam_size, angle, angle_min, angle_increment);
-        }
-
+      if (index >= 0 && index < EXPECTED_BEAMS) {
         if (setting.laser_scan_dir) {
-          int index_anticlockwise = beam_size - index - 1;
+          int index_anticlockwise = EXPECTED_BEAMS - index - 1;
           // If the current content is Nan, it is assigned directly
           if (std::isnan(output.ranges[index_anticlockwise])) {
             output.ranges[index_anticlockwise] = range;

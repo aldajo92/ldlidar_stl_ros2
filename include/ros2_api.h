@@ -32,6 +32,7 @@ struct LaserScanSetting
   bool enable_angle_crop_func;
   double angle_crop_min;
   double angle_crop_max;
+  int publish_frequency;
 };
 
 #endif //__ROS_API_H__
